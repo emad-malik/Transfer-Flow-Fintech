@@ -1,4 +1,4 @@
-"""ORM models for the three tables in PLAN.md section 2.
+"""ORM models for the three tables: accounts, transfers, ledger_entries.
 
 Deliberately no `accounts.balance` column. Balance is SUM(credits) - SUM(debits)
 over ledger_entries, computed in repositories/ledger_repo.py. See README for the

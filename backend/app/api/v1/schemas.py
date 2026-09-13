@@ -58,8 +58,8 @@ class TransferCreateRequest(BaseModel):
     """amount_minor is StrictInt (not conint) on purpose: a bool, float, or numeric
     string must fail schema validation as VALIDATION_ERROR, but a zero or negative
     plain int must reach the domain layer so it can be recorded as a FAILED transfer
-    with AMOUNT_NOT_POSITIVE -- see PLAN.md section 4 for why the failure needs to
-    be durable rather than rejected silently at the boundary.
+    with AMOUNT_NOT_POSITIVE -- see README's "The transfer flow" section for why
+    the failure needs to be durable rather than rejected silently at the boundary.
     """
 
     source_account_id: uuid.UUID

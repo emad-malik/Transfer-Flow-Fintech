@@ -1,6 +1,6 @@
 """Maps every error path (domain errors, request validation, anything unhandled)
-onto the single envelope shape in PLAN.md section 5. This is the only place that
-knows the envelope's JSON shape.
+onto the single envelope shape described in README's "Error contract"
+section. This is the only place that knows the envelope's JSON shape.
 """
 
 import logging

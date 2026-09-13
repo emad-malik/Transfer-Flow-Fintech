@@ -2,9 +2,9 @@
 
 A small, correctness-first slice of a payments feature: move "treats" (the
 in-app currency) between cat wallets, with double-entry ledgering, row
-locking, and idempotent retries. Built against the plan in `PLAN.md`; this
-README is the record of what actually happened while building it, including
-three places the plan turned out to be incomplete and how I closed them.
+locking, and idempotent retries. This README is the record of what actually
+happened while building it, including three places the original design
+turned out to be incomplete and how I closed them.
 
 ## Running it
 
@@ -35,10 +35,10 @@ ruff check .
 
 ## Stack and why
 
-See `PLAN.md` section 1 for the full table. The short version: FastAPI +
-SQLAlchemy 2.0 (sync, not async) + Postgres + Alembic on the backend, Next.js
-15 for a single thin page on the frontend, pytest against a real Postgres for
-tests. Sync SQLAlchemy was the one non-default choice worth restating here:
+FastAPI + SQLAlchemy 2.0 (sync, not async) + Postgres + Alembic on the
+backend, Next.js 15 for a single thin page on the frontend, pytest against a
+real Postgres for tests, ruff for lint. Sync SQLAlchemy was the one
+non-default choice worth restating here:
 the entire point of this exercise is locking semantics
 (`SELECT ... FOR UPDATE`, transaction boundaries, deadlock ordering), and an
 async session makes exactly that harder to reason about for no benefit at this
@@ -83,8 +83,8 @@ correctness than premature caching in a review.
 
 `POST /v1/transfers`, header `Idempotency-Key: <uuid>`, header
 `X-Cat-Id: <account id>` standing in for an authenticated principal (see
-"What's stubbed" below). Full numbered flow in `PLAN.md` section 4; the
-short version, as implemented in `services/transfer_service.py`:
+"What's stubbed" below). The flow, as implemented in
+`services/transfer_service.py`:
 
 1. Compute a sha256 fingerprint of `{source, destination, amount, currency}`.
 2. Idempotency pre-check: same key + same fingerprint already recorded ->
@@ -126,10 +126,26 @@ actually moved, and that one still can't hold a non-positive amount.
 
 ## Error contract
 
-Every error is `{"error": {"code", "message", "details"}}`. The full table of
-codes is in `PLAN.md` section 5 and each row has a dedicated integration test
-in `tests/integration/test_transfers_errors.py` -- adding a rule later means
+Every error is `{"error": {"code", "message", "details"}}`. Each row below
+has a dedicated integration test in
+`tests/integration/test_transfers_errors.py` -- adding a rule later means
 adding a row there, not inventing a new test shape.
+
+| Code | HTTP | Rule |
+|---|---|---|
+| `VALIDATION_ERROR` | 422 | Malformed body, non-integer amount, missing field, unknown currency |
+| `MISSING_IDEMPOTENCY_KEY` | 400 | Header absent on POST /transfers |
+| `IDEMPOTENCY_KEY_REUSE` | 409 | Key seen before with a different body |
+| `ACCOUNT_NOT_FOUND` | 404 | Either side does not exist |
+| `SELF_TRANSFER` | 422 | Source equals destination |
+| `AMOUNT_NOT_POSITIVE` | 422 | Zero or negative |
+| `AMOUNT_ABOVE_MAX` | 422 | Above the per-transfer cap |
+| `SOURCE_ACCOUNT_NOT_ACTIVE` | 409 | Source frozen or closed |
+| `DESTINATION_ACCOUNT_NOT_ACTIVE` | 409 | Destination frozen or closed |
+| `INSUFFICIENT_FUNDS` | 409 | Derived balance below amount |
+| `DAILY_LIMIT_EXCEEDED` | 409 | Today's posted debits plus amount exceeds the account limit |
+| `CURRENCY_MISMATCH` | 422 | Anything other than TREATS |
+| `UNAUTHORIZED_SOURCE` | 403 | Caller is not the source account holder |
 
 ## Where the plan turned out to be incomplete
 
@@ -192,12 +208,14 @@ easy to argue with.
   they're new domain concepts (a transfer that references another transfer)
   that deserve their own design, not a bolt-on.
 - **Async settlement / outbox / webhooks.** The `PENDING` status exists
-  specifically so this can be added later without a schema change -- see the
-  "why persist PENDING" note in `PLAN.md` section 4 -- but no worker exists
-  in this slice; everything resolves synchronously inside the request.
+  specifically so this can be added later without a schema change: real
+  payment rails are not synchronous, so keeping that state machine now means
+  an async settlement step later changes a worker, not the schema or the API
+  contract. No worker exists in this slice; everything resolves
+  synchronously inside the request.
 - **Rate limiting, fraud checks, observability beyond structured logs, cursor
-  pagination, idempotency key expiry/cleanup.** Explicitly out of scope per
-  the original plan; nothing here changed that.
+  pagination, idempotency key expiry/cleanup.** Explicitly out of scope from
+  the start; nothing here changed that.
 
 ## Money
 

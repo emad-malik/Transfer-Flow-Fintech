@@ -43,10 +43,10 @@ def list_accounts(
     offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
 ) -> AccountsPageResponse:
-    """Not one of the six endpoints in PLAN.md section 6. Added because the
-    frontend's sender/recipient dropdowns (section 8) have nothing to populate
-    from without it, and there is no other way to discover an account id in a
-    fresh clone. Unauthenticated, like account creation -- see README.
+    """Not one of the original six endpoints. Added because the frontend's
+    sender/recipient dropdowns have nothing to populate from without it, and
+    there is no other way to discover an account id in a fresh clone.
+    Unauthenticated, like account creation -- see README.
     """
     accounts = accounts_repo.list_all(db, limit=limit, offset=offset)
     return AccountsPageResponse(
@@ -65,7 +65,7 @@ def update_account_status(
     account_id: uuid.UUID, body: AccountStatusUpdateRequest, db: Session = Depends(get_db)
 ) -> AccountResponse:
     """Dev/admin-only, unauthenticated -- see account_service.set_account_status.
-    Not one of the six endpoints in PLAN.md section 6; added so FROZEN/CLOSED are
+    Not one of the original six endpoints; added so FROZEN/CLOSED are
     reachable through the API at all instead of only by editing the database.
     """
     account = account_service.set_account_status(db, account_id, body.status)

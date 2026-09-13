@@ -32,8 +32,8 @@ export type Transfer = {
 };
 
 /** Mirrors the {"error": {code, message, details}} envelope every backend
- * error uses (PLAN.md section 5). Thrown as-is so the UI can render the
- * server's own code and message instead of inventing its own copy.
+ * error uses. Thrown as-is so the UI can render the server's own code and
+ * message instead of inventing its own copy.
  */
 export class ApiError extends Error {
   code: string;

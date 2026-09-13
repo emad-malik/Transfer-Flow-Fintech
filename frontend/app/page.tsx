@@ -15,7 +15,7 @@ import {
 
 /** Parses a decimal treats string ("12.50") into integer minor units (1250)
  * without ever going through a float, so client-side rounding can't disagree
- * with the server's integer-only contract (PLAN.md section 2).
+ * with the server's integer-only contract.
  */
 function parseTreatsToMinor(input: string): number | null {
   const trimmed = input.trim();

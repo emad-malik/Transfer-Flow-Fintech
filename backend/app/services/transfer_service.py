@@ -1,7 +1,8 @@
 """Orchestrates POST /v1/transfers. Owns the transaction boundary end to end.
 
-See PLAN.md section 4 for the numbered flow this implements. Routers never touch
-a Session; this is the only layer that opens or commits a transaction.
+See README's "The transfer flow" section for the numbered flow this
+implements. Routers never touch a Session; this is the only layer that opens
+or commits a transaction.
 """
 
 import uuid

@@ -1,7 +1,8 @@
 """Domain error codes and the exception type that carries them.
 
-This is the single source of truth for the error contract in PLAN.md section 5.
-The API layer catches DomainError and maps it to the HTTP status + envelope;
+This is the single source of truth for the error contract (see README's
+"Error contract" section for the full table). The API layer catches
+DomainError and maps it to the HTTP status + envelope;
 nothing in here knows about FastAPI or HTTP.
 """
 

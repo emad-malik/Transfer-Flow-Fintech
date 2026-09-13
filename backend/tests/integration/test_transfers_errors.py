@@ -1,5 +1,5 @@
-"""One row per error code in PLAN.md section 5's table. Adding a rule later
-means adding a row here, per the plan's own test-harness section.
+"""One row per error code in README's error contract table. Adding a rule
+later means adding a row here.
 """
 
 import pytest
@@ -164,8 +164,8 @@ def test_unauthorized_source(client):
 
 def test_failed_transfer_is_still_persisted_and_readable(client):
     """A rule failure must be a durable, auditable record, not a silently
-    dropped request -- PLAN.md section 4's whole reason for inserting PENDING
-    before evaluating rules. Proof: replaying the *same* idempotency key
+    dropped request -- the whole reason for inserting PENDING before
+    evaluating rules. Proof: replaying the *same* idempotency key
     against the same body returns the stored FAILED record (200, per our
     idempotent-replay design) instead of re-running the rule and failing again.
     """

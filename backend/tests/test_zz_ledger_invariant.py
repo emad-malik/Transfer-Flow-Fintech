@@ -1,8 +1,8 @@
 """Named to sort last so it runs after every other test in the suite has had a
 chance to write to the ledger (pytest, absent other config, collects files in
 directory-then-name order, and this file sorts after unit/, integration/, and
-concurrency/). PLAN.md section 7: after the entire suite, credits and debits
-across the whole table must net to exactly zero -- no exceptions, ever.
+concurrency/). After the entire suite, credits and debits across the whole
+table must net to exactly zero -- no exceptions, ever.
 """
 
 from sqlalchemy import func, select

@@ -1,6 +1,6 @@
 """Hits the service layer directly with real threads and a real Postgres
-connection each, per PLAN.md section 7. This is what actually proves the
-SELECT ... FOR UPDATE locking works, not just that the code compiles.
+connection each. This is what actually proves the SELECT ... FOR UPDATE
+locking works, not just that the code compiles.
 """
 
 import threading
