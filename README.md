@@ -87,20 +87,12 @@ harder to get wrong, so that's what I built.
 
 1. Compute a sha256 fingerprint of `{source, destination, amount, currency}`.
 2. Idempotency pre-check: same key and same fingerprint already recorded,
-   **replay the original outcome** -- 200 with the stored transfer if it
-   POSTED, the same error code/status it returned the first time if it
-   FAILED (409 `INSUFFICIENT_FUNDS` stays 409, not a 200 with `status:
-   FAILED` buried in the body, which a naive retrying client would read as
-   success). Same key with a different fingerprint, 409
-   `IDEMPOTENCY_KEY_REUSE`. This pre-check is an optimisation; the real
-   guarantee is the unique constraint on `(transfers.caller_cat_id,
-   transfers.idempotency_key)`, enforced via a SAVEPOINT around the insert
-   so two requests racing past the pre-check still can't double-post (see
-   the docstring in `transfer_service.py` for the exact interleaving this
-   defends against). The constraint is scoped to the caller, not global:
-   idempotency keys are client-generated with no coordination between
-   callers, so a bare-unique column would let one caller's key collide with
-   an unrelated caller's request.
+   return the stored transfer, 200. Same key with a different fingerprint,
+   409 `IDEMPOTENCY_KEY_REUSE`. This is an optimisation; the real guarantee
+   is the unique constraint on `transfers.idempotency_key`, enforced via a
+   SAVEPOINT around the insert so two requests racing past the pre-check
+   still can't double-post (see the docstring in `transfer_service.py` for
+   the exact interleaving this defends against).
 3. Lock both accounts with `SELECT ... FOR UPDATE`, always in ascending id
    order. That ordering is what stops A->B and B->A transfers from
    deadlocking each other, and it's checked by a real multi-threaded test
@@ -110,14 +102,10 @@ harder to get wrong, so that's what I built.
    rule failure is a durable, auditable `FAILED` row rather than a silently
    dropped request.
 5. Run every rule in `domain/rules.py` against the locked, freshly-read
-   state, authorization first -- a caller who isn't the source shouldn't be
-   able to distinguish error codes on an account that isn't theirs by
-   probing self-transfer, amount, or currency checks first. Pass: write the
-   DEBIT/CREDIT pair, mark `POSTED`, commit. Fail: mark `FAILED` with the
-   rule's error code and message, commit that, then re-raise the error to
-   the caller. The failure is on disk before the caller ever sees the
-   409/422, and its id rides in the error's `details.transfer_id` either
-   way, so it's still fetchable by `GET /v1/transfers/{id}` afterward.
+   state. Pass: write the DEBIT/CREDIT pair, mark `POSTED`, commit. Fail:
+   mark `FAILED` with the rule's error code and message, commit that, then
+   re-raise the error to the caller. The failure is on disk before the
+   caller ever sees the 409/422.
 
 One asymmetry worth flagging: `ACCOUNT_NOT_FOUND`, `MISSING_IDEMPOTENCY_KEY`,
 and `IDEMPOTENCY_KEY_REUSE` happen before a transfer row exists, not after.
@@ -223,14 +211,9 @@ easy to argue with.
   settlement step later only touches a worker, not the schema or the API
   contract. No worker exists in this slice; everything resolves
   synchronously inside the request.
-- **Rate limiting, fraud checks, deeper observability (metrics, tracing),
+- **Rate limiting, fraud checks, observability beyond structured logs,
   cursor pagination, idempotency key expiry/cleanup.** Out of scope from the
-  start. Basic structured logging is not, though: `RequestLoggingMiddleware`
-  in `main.py` logs one line per request (request id, caller, transfer id
-  when the request created one, status, duration), and the `DomainError`
-  handler logs each rejection's code -- enough to answer "who did what, and
-  what happened" from logs, which is what the auditability argument actually
-  needs, without building a metrics/tracing stack for a take-home slice.
+  start, and nothing here changed that.
 
 ## Money
 
@@ -244,34 +227,15 @@ reason: it's meant to be tuned per deployment, not hardcoded.
 
 One page (`frontend/app/page.tsx`). It generates one idempotency key per
 "attempt" (a new key whenever sender, recipient, or amount changes) and
-reuses it whenever the catch block sees a plain `NETWORK_ERROR` rather than
-a parsed `ApiError`, since that's exactly the case an idempotency key exists
-for: not knowing if the server saw the first request. A definitive business
-or validation error (bad amount, insufficient funds, frozen account) gets a
-fresh key on the next submit, since the user is about to send a materially
-different request by fixing the input, not retrying the same one.
-
-On the mechanism, not just the policy: a `500` from FastAPI's catch-all
-exception handler is served by Starlette's `ServerErrorMiddleware`, which
-sits *outside* `CORSMiddleware`, so the response never carries the app's CORS
-headers. The browser's `fetch` sees a CORS-blocked response and throws before
-`page.tsx` ever gets a body to parse -- there is no path where the code reads
-`err.code === "INTERNAL_ERROR"` from a real 500 in the browser. It still
-works, because that `fetch` rejection is caught by the same `catch` block as
-any other network failure and lands in the generic `NETWORK_ERROR` branch,
-which also retains the key. The retry policy is correct; a 500 just never
-takes the branch its own error code suggests it would.
-
-The amount input parses treats as a decimal string into integer minor units
-without ever going through a float (`parseTreatsToMinor` in `page.tsx`), so
-client-side rounding can't disagree with the server's integer-only contract.
-`formatTreats` (display only, `lib/api.ts`) handles a negative `amount_minor`
-by formatting the magnitude and prefixing the sign, rather than relying on
-`Math.trunc`'s and `%`'s behavior near zero, which drops the sign entirely
-for values between -1 and 0 treats. The sender/recipient pickers filter out
-system accounts (`Account.is_system`, set by the backend from the fixed
-Treasury/External Funding ids) so a fresh clone doesn't default to sending
-from an account sitting around -1,000,000 treats.
+reuses it if a submit comes back as a network failure or a `500`, since
+that's exactly the case an idempotency key exists for: not knowing if the
+server saw the first request. A definitive business or validation error
+(bad amount, insufficient funds, frozen account) gets a fresh key on the
+next submit, since the user is about to send a materially different
+request by fixing the input, not retrying the same one. The amount input
+parses treats as a decimal string into integer minor units without ever
+going through a float (`parseTreatsToMinor` in `page.tsx`), so client-side
+rounding can't disagree with the server's integer-only contract.
 
 ## Known limitations, on top of the explicit scope cuts
 
