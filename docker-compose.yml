@@ -1,0 +1,46 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: meowpay
+      POSTGRES_PASSWORD: meowpay
+      POSTGRES_DB: meowpay
+    ports:
+      - "5432:5432"
+    volumes:
+      - meowpay_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U meowpay -d meowpay"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
+  backend:
+    build: ./backend
+    environment:
+      DATABASE_URL: postgresql+psycopg://meowpay:meowpay@postgres:5432/meowpay
+      CORS_ORIGINS: '["http://localhost:3000"]'
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./frontend
+      # NEXT_PUBLIC_API_BASE_URL must be a build arg, not a runtime
+      # `environment:` entry -- Next.js inlines NEXT_PUBLIC_* vars into the
+      # client bundle at `next build`, before this container ever starts.
+      # localhost:8000 is correct here because this URL is called from the
+      # user's browser, not from inside the Docker network -- and the
+      # backend's port 8000 is published to the host, same as this service's.
+      args:
+        NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+
+volumes:
+  meowpay_pgdata:
