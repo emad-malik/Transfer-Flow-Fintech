@@ -12,6 +12,7 @@ from app.api.v1.schemas import (
     TransactionsPageResponse,
 )
 from app.db.session import get_db
+from app.domain.system_accounts import SYSTEM_ACCOUNT_IDS
 from app.repositories import accounts_repo, ledger_repo
 from app.services import account_service
 
@@ -26,6 +27,11 @@ def _to_account_response(db: Session, account) -> AccountResponse:
         balance_minor=account_service.get_balance_minor(db, account.id),
         daily_limit_minor=account.daily_limit_minor,
         created_at=account.created_at,
+        # External Funding and Treasury (migration 0002) are plumbing, not
+        # demo wallets -- flagged so the frontend can filter them out of the
+        # sender/recipient pickers instead of defaulting a fresh clone's demo
+        # to "send from External Funding", which sits at roughly -1,000,000.
+        is_system=account.id in SYSTEM_ACCOUNT_IDS,
     )
 
 

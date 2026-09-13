@@ -7,7 +7,7 @@ instead of inspecting the body to know which 2xx it is.
 
 import uuid
 
-from fastapi import APIRouter, Depends, Header
+from fastapi import APIRouter, Depends, Header, Response
 from sqlalchemy.orm import Session
 
 from app.api.v1.schemas import TransferCreateRequest, TransferResponse
@@ -23,6 +23,7 @@ router = APIRouter(tags=["transfers"])
 @router.post("/transfers", response_model=TransferResponse, status_code=200)
 def create_transfer(
     body: TransferCreateRequest,
+    response: Response,
     db: Session = Depends(get_db),
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     caller_cat_id: str | None = Header(default=None, alias="X-Cat-Id"),
@@ -47,6 +48,7 @@ def create_transfer(
         expected_currency=settings.currency,
         max_amount_minor=settings.transfer_max_amount_minor,
     )
+    response.headers["X-Transfer-Id"] = str(transfer.id)  # picked up by the request logger
     return TransferResponse.model_validate(transfer)
 
 

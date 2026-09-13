@@ -165,9 +165,12 @@ def test_unauthorized_source(client):
 def test_failed_transfer_is_still_persisted_and_readable(client):
     """A rule failure must be a durable, auditable record, not a silently
     dropped request -- the whole reason for inserting PENDING before
-    evaluating rules. Proof: replaying the *same* idempotency key
-    against the same body returns the stored FAILED record (200, per our
-    idempotent-replay design) instead of re-running the rule and failing again.
+    evaluating rules. Proof: the FAILED row is fetchable by id afterwards.
+
+    Replaying the *same* idempotency key against the same body reproduces the
+    *original outcome* -- same 409, same INSUFFICIENT_FUNDS -- rather than a
+    200 with status: FAILED buried in the body, which a naive retrying client
+    would read as success. See README's error contract.
     """
     sender = create_account(client)
     receiver = create_account(client)
@@ -178,17 +181,46 @@ def test_failed_transfer_is_still_persisted_and_readable(client):
         idempotency_key=key, caller_cat_id=sender["id"],
     )
     assert first.status_code == 409
-    assert first.json()["error"]["code"] == "INSUFFICIENT_FUNDS"
+    first_body = first.json()
+    assert first_body["error"]["code"] == "INSUFFICIENT_FUNDS"
+    transfer_id = first_body["error"]["details"]["transfer_id"]
 
     replay = make_transfer(
         client, source_id=sender["id"], destination_id=receiver["id"], amount_minor=10,
         idempotency_key=key, caller_cat_id=sender["id"],
     )
-    assert replay.status_code == 200
-    body = replay.json()
-    assert body["status"] == "FAILED"
-    assert body["failure_code"] == "INSUFFICIENT_FUNDS"
+    assert replay.status_code == 409
+    replay_body = replay.json()
+    assert replay_body["error"]["code"] == "INSUFFICIENT_FUNDS"
+    assert replay_body["error"]["details"]["transfer_id"] == transfer_id
 
-    fetched = client.get(f"/v1/transfers/{body['id']}")
+    fetched = client.get(f"/v1/transfers/{transfer_id}")
     assert fetched.status_code == 200
     assert fetched.json()["status"] == "FAILED"
+    assert fetched.json()["failure_code"] == "INSUFFICIENT_FUNDS"
+
+
+def test_validation_error_on_non_integer_amount(client):
+    """schemas.py documents StrictInt as the guarantee that separates
+    VALIDATION_ERROR (fails schema, never reaches the domain layer) from
+    AMOUNT_NOT_POSITIVE (a plain int that fails the domain rule) -- but that
+    guarantee had no test on /v1/transfers itself. A numeric string, a float,
+    and a bool must all be rejected at the schema boundary.
+    """
+    sender = create_account(client)
+    receiver = create_account(client)
+    fund_account(client, sender["id"], 100)
+
+    for bad_amount in ["100", 1.5, True]:
+        resp = client.post(
+            "/v1/transfers",
+            json={
+                "source_account_id": sender["id"],
+                "destination_account_id": receiver["id"],
+                "amount_minor": bad_amount,
+                "currency": "TREATS",
+            },
+            headers={"Idempotency-Key": new_idempotency_key(), "X-Cat-Id": sender["id"]},
+        )
+        assert resp.status_code == 422, (bad_amount, resp.text)
+        assert resp.json()["error"]["code"] == "VALIDATION_ERROR"

@@ -21,6 +21,17 @@ def _envelope(code: str, message: str, details: dict | None = None) -> dict:
 def register_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(DomainError)
     async def domain_error_handler(request: Request, exc: DomainError) -> JSONResponse:
+        # INFO, not exception(): a DomainError is an expected, handled outcome
+        # (insufficient funds, a bad amount, ...), not a bug -- but it still
+        # belongs in the audit trail RequestLoggingMiddleware's one-line-per-
+        # request log can't see inside the response body to know about.
+        logger.info(
+            "domain_error request_id=%s code=%s %s %s",
+            getattr(request.state, "request_id", "-"),
+            exc.code.value,
+            request.method,
+            request.url.path,
+        )
         return JSONResponse(
             status_code=exc.http_status,
             content=_envelope(exc.code.value, exc.message, exc.details),

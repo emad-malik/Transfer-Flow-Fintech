@@ -7,6 +7,11 @@ export type Account = {
   balance_minor: number;
   daily_limit_minor: number;
   created_at: string;
+  // True for the two seed accounts (External Funding, Treasury) migration
+  // 0002 creates. They're plumbing, not demo wallets -- the UI filters them
+  // out of the sender/recipient pickers rather than showing a cat name next
+  // to a balance in the negative millions.
+  is_system: boolean;
 };
 
 export type LedgerEntry = {
@@ -93,7 +98,12 @@ export function createTransfer(params: {
 }
 
 export function formatTreats(amountMinor: number): string {
-  const treats = Math.trunc(amountMinor / 100);
-  const whiskers = Math.abs(amountMinor % 100);
-  return `${treats}.${String(whiskers).padStart(2, "0")}`;
+  // Math.trunc(-0.5) is -0, which stringifies as "0" and silently drops the
+  // sign. Split the sign off first and format the magnitude, so a negative
+  // amount under one treat still prints with its minus sign.
+  const sign = amountMinor < 0 ? "-" : "";
+  const magnitude = Math.abs(amountMinor);
+  const treats = Math.trunc(magnitude / 100);
+  const whiskers = magnitude % 100;
+  return `${sign}${treats}.${String(whiskers).padStart(2, "0")}`;
 }

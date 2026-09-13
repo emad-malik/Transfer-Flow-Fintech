@@ -1,4 +1,12 @@
-"""Transfer row SQL. The idempotency unique constraint is defended here."""
+"""Transfer row SQL. The idempotency unique constraint is defended here.
+
+The unique constraint is on (caller_cat_id, idempotency_key), not on
+idempotency_key alone: keys are client-generated with no coordination
+between callers, so a global-unique column would let one caller's key
+collide with an unrelated caller's request. Scoping by caller keeps the
+collision surface to "you reused your own key," which is the only thing
+idempotency is meant to catch.
+"""
 
 import uuid
 from datetime import UTC, datetime
@@ -9,8 +17,13 @@ from sqlalchemy.orm import Session
 from app.db.models import Transfer, TransferStatus
 
 
-def get_by_idempotency_key(db: Session, idempotency_key: str) -> Transfer | None:
-    stmt = select(Transfer).where(Transfer.idempotency_key == idempotency_key)
+def get_by_idempotency_key(
+    db: Session, caller_cat_id: str, idempotency_key: str
+) -> Transfer | None:
+    stmt = select(Transfer).where(
+        Transfer.caller_cat_id == caller_cat_id,
+        Transfer.idempotency_key == idempotency_key,
+    )
     return db.execute(stmt).scalar_one_or_none()
 
 
@@ -21,6 +34,7 @@ def get_by_id(db: Session, transfer_id: uuid.UUID) -> Transfer | None:
 def create_pending(
     db: Session,
     *,
+    caller_cat_id: str,
     idempotency_key: str,
     request_fingerprint: str,
     source_account_id: uuid.UUID,
@@ -29,11 +43,12 @@ def create_pending(
     currency: str,
 ) -> Transfer:
     """Insert the PENDING row. Callers must flush inside a transaction so an
-    IntegrityError on the idempotency_key unique constraint surfaces here, not
-    after the ledger entries have also been written.
+    IntegrityError on the (caller_cat_id, idempotency_key) unique constraint
+    surfaces here, not after the ledger entries have also been written.
     """
     transfer = Transfer(
         id=uuid.uuid4(),
+        caller_cat_id=caller_cat_id,
         idempotency_key=idempotency_key,
         request_fingerprint=request_fingerprint,
         source_account_id=source_account_id,

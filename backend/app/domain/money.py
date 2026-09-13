@@ -9,9 +9,15 @@ WHISKERS_PER_TREAT = 100
 
 
 def format_treats(amount_minor: int) -> str:
-    """Human-readable display only. Never parse this back into a number."""
-    treats, whiskers = divmod(amount_minor, WHISKERS_PER_TREAT)
-    return f"{treats}.{whiskers:02d} treats"
+    """Human-readable display only. Never parse this back into a number.
+
+    divmod() floors toward negative infinity, so divmod(-150, 100) is (-2, 50),
+    which would print "-2.50" for -1.50 treats. Split off the sign and divmod
+    the absolute value instead, so the magnitude is never wrong.
+    """
+    sign = "-" if amount_minor < 0 else ""
+    treats, whiskers = divmod(abs(amount_minor), WHISKERS_PER_TREAT)
+    return f"{sign}{treats}.{whiskers:02d} treats"
 
 
 def is_valid_amount(value: object) -> bool:

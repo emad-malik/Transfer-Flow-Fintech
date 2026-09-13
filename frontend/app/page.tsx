@@ -47,9 +47,15 @@ export default function SendTreatsPage() {
     listAccounts()
       .then((res) => {
         setAccounts(res.items);
-        if (res.items.length >= 2) {
-          setSourceId(res.items[0].id);
-          setDestinationId(res.items[1].id);
+        // External Funding and Treasury are plumbing (see is_system on
+        // Account), not demo wallets -- and they're always the first two
+        // accounts created, so defaulting to items[0]/items[1] would open
+        // the demo on "send from External Funding" with a balance around
+        // -1,000,000. Default past them instead.
+        const selectable = res.items.filter((a) => !a.is_system);
+        if (selectable.length >= 2) {
+          setSourceId(selectable[0].id);
+          setDestinationId(selectable[1].id);
         }
       })
       .catch(() => setAccounts([]))
@@ -75,6 +81,7 @@ export default function SendTreatsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sourceId, destinationId]);
 
+  const selectableAccounts = accounts.filter((a) => !a.is_system);
   const amountMinor = parseTreatsToMinor(amount);
   const canSubmit =
     !submitting &&
@@ -151,7 +158,7 @@ export default function SendTreatsPage() {
           <option value="" disabled>
             Select a sender
           </option>
-          {accounts.map((a) => (
+          {selectableAccounts.map((a) => (
             <option key={a.id} value={a.id}>
               {a.cat_name} ({formatTreats(a.balance_minor)} treats)
             </option>
@@ -168,7 +175,7 @@ export default function SendTreatsPage() {
           <option value="" disabled>
             Select a recipient
           </option>
-          {accounts.map((a) => (
+          {selectableAccounts.map((a) => (
             <option key={a.id} value={a.id}>
               {a.cat_name}
             </option>

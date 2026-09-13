@@ -6,11 +6,12 @@ or commits a transaction.
 """
 
 import uuid
+from dataclasses import dataclass
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.db.models import Account, Transfer
+from app.db.models import Account, Transfer, TransferStatus
 from app.domain.errors import DomainError, ErrorCode
 from app.domain.idempotency import compute_fingerprint
 from app.domain.rules import AccountSnapshot, TransferRequestInputs, evaluate_transfer
@@ -25,6 +26,50 @@ def _snapshot(db: Session, account: Account) -> AccountSnapshot:
         daily_limit_minor=account.daily_limit_minor,
         posted_debits_today_minor=ledger_repo.posted_debits_today_utc(db, account.id),
     )
+
+
+@dataclass(frozen=True)
+class _TransferSnapshot:
+    """Plain-value copy of the fields the idempotency paths below need, read
+    while the row is still fresh. SQLAlchemy expires ORM instances on both
+    rollback and commit, so an attribute touched afterwards silently issues
+    another SELECT and reopens a transaction that only closes when get_db()
+    closes the session -- reading into locals first avoids that round-trip.
+    """
+
+    transfer_id: str
+    fingerprint: str
+    status: str
+    failure_code: str | None
+    failure_reason: str | None
+
+
+def _snapshot_before_expiry(transfer: Transfer) -> _TransferSnapshot:
+    return _TransferSnapshot(
+        transfer_id=str(transfer.id),
+        fingerprint=transfer.request_fingerprint,
+        status=transfer.status,
+        failure_code=transfer.failure_code,
+        failure_reason=transfer.failure_reason,
+    )
+
+
+def _replay_result(transfer: Transfer, snapshot: _TransferSnapshot) -> Transfer:
+    """A replayed idempotent lookup must reproduce the *original outcome*, not
+    just the original row. If the stored attempt FAILED, replay the same
+    error (code, message, and therefore HTTP status) the first call returned
+    -- a bare 200 with status: FAILED buried in the body is exactly what a
+    naive retrying client reads as success. See README's error contract.
+    transfer_id rides along in details so a caller can still look up the
+    durable record after a replay, the same as it could after a fresh failure.
+    """
+    if snapshot.status == TransferStatus.FAILED.value:
+        raise DomainError(
+            ErrorCode(snapshot.failure_code),
+            snapshot.failure_reason or "",
+            details={"transfer_id": snapshot.transfer_id},
+        )
+    return transfer
 
 
 def execute_transfer(
@@ -59,15 +104,16 @@ def execute_transfer(
     # it out. `db.begin_nested()` (a SAVEPOINT) is still used around the
     # idempotency-key insert, and nests correctly inside either kind of
     # transaction.
-    existing = transfers_repo.get_by_idempotency_key(db, idempotency_key)
+    existing = transfers_repo.get_by_idempotency_key(db, caller_cat_id, idempotency_key)
     if existing is not None:
+        snapshot = _snapshot_before_expiry(existing)  # read before rollback, see above
         db.rollback()  # nothing to commit; ends the read-only transaction cleanly
-        if existing.request_fingerprint != fingerprint:
+        if snapshot.fingerprint != fingerprint:
             raise DomainError(
                 ErrorCode.IDEMPOTENCY_KEY_REUSE,
                 "This idempotency key was already used with a different request body.",
             )
-        return existing
+        return _replay_result(existing, snapshot)
 
     domain_error: DomainError | None = None
 
@@ -96,6 +142,7 @@ def execute_transfer(
             with db.begin_nested():
                 transfer = transfers_repo.create_pending(
                     db,
+                    caller_cat_id=caller_cat_id,
                     idempotency_key=idempotency_key,
                     request_fingerprint=fingerprint,
                     source_account_id=source_account_id,
@@ -103,18 +150,22 @@ def execute_transfer(
                     amount_minor=amount_minor,
                     currency=currency,
                 )
+            # Assigned by create_pending() before insert, not read back from
+            # the row -- safe to use after the commit below expires `transfer`.
+            transfer_id = str(transfer.id)
         except IntegrityError:
             # Lost the race: someone else committed this key first while we were
             # waiting on the account locks. Re-read and resolve exactly like the
             # pre-check above.
-            winner = transfers_repo.get_by_idempotency_key(db, idempotency_key)
+            winner = transfers_repo.get_by_idempotency_key(db, caller_cat_id, idempotency_key)
             if winner is None or winner.request_fingerprint != fingerprint:
                 raise DomainError(
                     ErrorCode.IDEMPOTENCY_KEY_REUSE,
                     "This idempotency key was already used with a different request body.",
                 ) from None
+            snapshot = _snapshot_before_expiry(winner)  # read before commit expires it
             db.commit()
-            return winner
+            return _replay_result(winner, snapshot)
 
         # Step 6: run domain rules against the locked, freshly-read state.
         try:
@@ -132,9 +183,12 @@ def execute_transfer(
         except DomainError as exc:
             # Step 7 (fail path): record the failure and keep it. Commit below,
             # then re-raise afterwards -- raising here instead would roll back
-            # this same mark_failed write along with it.
+            # this same mark_failed write along with it. transfer_id rides in
+            # details so the caller can look up the durable FAILED record.
             transfers_repo.mark_failed(db, transfer, code=exc.code.value, reason=exc.message)
-            domain_error = exc
+            domain_error = DomainError(
+                exc.code, exc.message, details={**exc.details, "transfer_id": transfer_id}
+            )
         else:
             # Step 7 (pass path): the only place ledger_entries gets written.
             ledger_repo.insert_double_entry(

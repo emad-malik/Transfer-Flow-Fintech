@@ -1,3 +1,14 @@
+"""Account-side orchestration. Uses `with db.begin():` for its transactions,
+unlike transfer_service.py's manual `db.commit()` / `db.rollback()`. Both are
+correct SQLAlchemy 2.0 idioms; the difference is deliberate rather than
+inconsistency. Every function here is a single straight-line unit of work
+with nothing to inspect before deciding to commit, so the context manager's
+commit-on-success / rollback-on-exception is the simpler fit. transfer_service
+needs manual control because it conditionally rolls back mid-flow (the
+idempotency pre-check) and must keep a PENDING row's failure committed *before*
+re-raising the domain error -- see the docstring there.
+"""
+
 import uuid
 
 from sqlalchemy.orm import Session

@@ -15,8 +15,10 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     String,
+    UniqueConstraint,
     Uuid,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import BIGINT
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -69,7 +71,11 @@ class Transfer(Base):
     __tablename__ = "transfers"
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
-    idempotency_key: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    # The X-Cat-Id the request was made with. Idempotency uniqueness is scoped
+    # to (caller_cat_id, idempotency_key) below rather than idempotency_key
+    # alone -- see repositories/transfers_repo.py for why.
+    caller_cat_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(255), nullable=False)
     request_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
     source_account_id: Mapped[uuid.UUID] = mapped_column(
         Uuid, ForeignKey("accounts.id"), nullable=False
@@ -101,6 +107,9 @@ class Transfer(Base):
         CheckConstraint(
             "status IN ('PENDING', 'POSTED', 'FAILED')", name="ck_transfers_status_valid"
         ),
+        UniqueConstraint(
+            "caller_cat_id", "idempotency_key", name="ux_transfers_caller_idempotency_key"
+        ),
     )
 
 
@@ -124,4 +133,16 @@ class LedgerEntry(Base):
         CheckConstraint("amount_minor > 0", name="ck_ledger_amount_positive"),
         CheckConstraint("direction IN ('DEBIT', 'CREDIT')", name="ck_ledger_direction_valid"),
         Index("ix_ledger_account_created", "account_id", "created_at"),
+        # posted_debits_today_utc() (repositories/ledger_repo.py) filters on
+        # account_id, direction = 'DEBIT', and created_at on every transfer --
+        # it's the daily-limit check, so it runs on every single transfer
+        # attempt. A partial index matching that predicate keeps the debit-only
+        # scan small as ledger_entries grows, instead of scanning every credit
+        # row too. Not needed at this scale; cheap to have ready.
+        Index(
+            "ix_ledger_debits_account_created",
+            "account_id",
+            "created_at",
+            postgresql_where=text("direction = 'DEBIT'"),
+        ),
     )

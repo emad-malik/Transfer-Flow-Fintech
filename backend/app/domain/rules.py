@@ -5,9 +5,13 @@ has already read from locked rows, and raises DomainError on the first rule that
 fails. This is what makes the whole rule set unit-testable in milliseconds without
 Postgres running: the service layer's job is only to fetch state and call this.
 
-Rule order matters and is intentional: cheap, request-shaped checks (self-transfer,
-amount, currency) run before anything that depends on locked account state, so a
-malformed request never even needs a lock.
+Rule order matters and is intentional. Authorization runs first, before anything
+else: a caller who isn't the source shouldn't be able to distinguish error codes
+(SELF_TRANSFER vs AMOUNT_NOT_POSITIVE vs ...) on an account that isn't theirs --
+"authorize before you do anything else" is a reflex, not an optimisation. Only
+after that do the cheap, request-shaped checks (self-transfer, amount, currency)
+run ahead of anything that depends on locked account state, so a malformed
+request never even needs a lock.
 """
 
 from dataclasses import dataclass
@@ -103,10 +107,10 @@ def check_daily_limit(
 
 def evaluate_transfer(inputs: TransferRequestInputs) -> None:
     """Run every rule in order. Raises the first DomainError encountered."""
+    check_authorized(inputs.caller_cat_id, inputs.source.id)
     check_not_self_transfer(inputs.source.id, inputs.destination.id)
     check_amount(inputs.amount_minor, inputs.max_amount_minor)
     check_currency(inputs.currency, inputs.expected_currency)
-    check_authorized(inputs.caller_cat_id, inputs.source.id)
     check_account_active(inputs.source.status, role="source")
     check_account_active(inputs.destination.status, role="destination")
     check_sufficient_funds(inputs.source.balance_minor, inputs.amount_minor)

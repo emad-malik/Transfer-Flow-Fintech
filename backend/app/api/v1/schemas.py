@@ -26,6 +26,7 @@ class AccountResponse(BaseModel):
     balance_minor: int
     daily_limit_minor: int
     created_at: datetime
+    is_system: bool
 
 
 class AccountStatusUpdateRequest(BaseModel):
